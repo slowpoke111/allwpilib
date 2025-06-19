@@ -92,6 +92,10 @@ public final class DriverStation {
   private static final double JOYSTICK_UNPLUGGED_MESSAGE_INTERVAL = 1.0;
   private static double m_nextMessageTime;
 
+  // Alerts for joystick unplugged warnings
+  private static final Alert[] m_joystickUnpluggedAlerts = new Alert[kJoystickPorts];
+  private static final boolean[] m_joystickWasConnected = new boolean[kJoystickPorts];
+
   @SuppressWarnings("MemberName")
   private static class MatchDataSender {
     private static final String kSmartDashboardType = "FMSInfo";
@@ -437,6 +441,12 @@ public final class DriverStation {
       m_joystickAxesCache[i] = new HALJoystickAxes(DriverStationJNI.kMaxJoystickAxes);
       m_joystickAxesRawCache[i] = new HALJoystickAxesRaw(DriverStationJNI.kMaxJoystickAxes);
       m_joystickPOVsCache[i] = new HALJoystickPOVs(DriverStationJNI.kMaxJoystickPOVs);
+
+      // Initialize joystick unplugged alerts
+      m_joystickUnpluggedAlerts[i] = new Alert(
+          "Joystick " + i + " not available, check if controller is plugged in",
+          Alert.AlertType.kWarning);
+      m_joystickWasConnected[i] = false;
     }
 
     m_matchDataSender = new MatchDataSender();
@@ -546,12 +556,7 @@ public final class DriverStation {
       m_cacheDataMutex.unlock();
     }
 
-    reportJoystickUnpluggedWarning(
-        "Joystick Button "
-            + button
-            + " on port "
-            + stick
-            + " not available, check if controller is plugged in");
+    reportJoystickUnpluggedAlert(stick, "Button " + button);
     return false;
   }
 
@@ -586,12 +591,7 @@ public final class DriverStation {
       m_cacheDataMutex.unlock();
     }
 
-    reportJoystickUnpluggedWarning(
-        "Joystick Button "
-            + button
-            + " on port "
-            + stick
-            + " not available, check if controller is plugged in");
+    reportJoystickUnpluggedAlert(stick, "Button " + button);
     return false;
   }
 
@@ -626,12 +626,7 @@ public final class DriverStation {
       m_cacheDataMutex.unlock();
     }
 
-    reportJoystickUnpluggedWarning(
-        "Joystick Button "
-            + button
-            + " on port "
-            + stick
-            + " not available, check if controller is plugged in");
+    reportJoystickUnpluggedAlert(stick, "Button " + button);
     return false;
   }
 
@@ -660,12 +655,7 @@ public final class DriverStation {
       m_cacheDataMutex.unlock();
     }
 
-    reportJoystickUnpluggedWarning(
-        "Joystick axis "
-            + axis
-            + " on port "
-            + stick
-            + " not available, check if controller is plugged in");
+    reportJoystickUnpluggedAlert(stick, "Axis " + axis);
     return 0.0;
   }
 
@@ -693,12 +683,7 @@ public final class DriverStation {
       m_cacheDataMutex.unlock();
     }
 
-    reportJoystickUnpluggedWarning(
-        "Joystick POV "
-            + pov
-            + " on port "
-            + stick
-            + " not available, check if controller is plugged in");
+    reportJoystickUnpluggedAlert(stick, "POV " + pov);
     return -1;
   }
 
@@ -1253,6 +1238,9 @@ public final class DriverStation {
 
     DriverStationJNI.getControlWord(m_controlWordCache);
 
+    // Update joystick unplugged alerts
+    updateJoystickAlerts();
+
     DataLogSender dataLogSender;
     // lock joystick mutex to swap cache data
     m_cacheDataMutex.lock();
@@ -1333,6 +1321,47 @@ public final class DriverStation {
       reportError(message, false);
       m_nextMessageTime = currentTime + JOYSTICK_UNPLUGGED_MESSAGE_INTERVAL;
     }
+  }
+
+  
+  //Updates joystick unplugged alerts. Should be called periodically. 
+  private static void updateJoystickAlerts() {
+    if (isFMSAttached() || m_silenceJoystickWarning) {
+      // Disable all alerts when silenced or on FMS
+      for (int i = 0; i < kJoystickPorts; i++) {
+        m_joystickUnpluggedAlerts[i].set(false);
+      }
+      return;
+    }
+
+    for (int i = 0; i < kJoystickPorts; i++) {
+      boolean isConnected = isJoystickConnected(i);
+      
+      // Only show alert if joystick was previously connected but is now disconnected or if trying to use a disconnected joystick
+      if (!isConnected && m_joystickWasConnected[i]) {
+        m_joystickUnpluggedAlerts[i].set(true);
+      } else if (isConnected) {
+        m_joystickUnpluggedAlerts[i].set(false);
+      }
+      
+      m_joystickWasConnected[i] = isConnected;
+    }
+  }
+
+  /**
+   * Reports a joystick unplugged alert for a specific port.
+   *
+   * @param stick The joystick port number.
+   * @param component The component being accessed (e.g., "Button 1", "Axis 2", "POV 0").
+   */
+  private static void reportJoystickUnpluggedAlert(int stick, String component) {
+    if (isFMSAttached() || m_silenceJoystickWarning) {
+      return;
+    }
+
+    String alertText = component + " on joystick " + stick + " not available, check if controller is plugged in";
+    m_joystickUnpluggedAlerts[stick].setText(alertText);
+    m_joystickUnpluggedAlerts[stick].set(true);
   }
 
   /**
